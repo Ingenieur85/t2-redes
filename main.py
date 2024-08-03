@@ -1,57 +1,61 @@
 import socket
-import sys
-import json
+import argparse
 import time
 
-PLAYER_COUNT = 4
-BASE_PORT = 5000
+# Network configuration
+PLAYER_PORTS = [5001, 5002, 5003, 5004]
+HOST = 'localhost'
 
-def get_next_player(player_number):
-    return (player_number % PLAYER_COUNT) + 1
-
-def create_message(token, message=""):
-    return json.dumps({"token": token, "message": message}).encode('utf-8')
-
-def parse_message(data):
-    message = json.loads(data.decode('utf-8'))
-    return message["token"], message["message"]
-
-def main(player_number):
-    player_number = int(player_number)
-    player_port = BASE_PORT + player_number
-    next_player_port = BASE_PORT + get_next_player(player_number)
-    
+def setup_network(player_num):
+    """Set up the network for the current player."""
+    my_port = PLAYER_PORTS[player_num - 1]
+    next_port = PLAYER_PORTS[player_num % 4]  # Wrap around to the first player
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('localhost', player_port))
+    sock.bind((HOST, my_port))
+    return sock, (HOST, next_port)
 
-    if player_number == 1:
-        token = True
-        message = "Hello from player 1"
-        sock.sendto(create_message(token, message), ('localhost', next_player_port))
-    else:
-        token = False
+def send_message(sock, dest_address, message):
+    """Send a message to the next player."""
+    sock.sendto(message.encode(), dest_address)
+
+def receive_message(sock):
+    """Receive a message from the previous player."""
+    data, addr = sock.recvfrom(1024)
+    return data.decode()
+
+def pass_token(sock, next_address):
+    """Pass the token to the next player."""
+    send_message(sock, next_address, "TOKEN")
+
+def main(player_num):
+    sock, next_address = setup_network(player_num)
+    print(f"Player {player_num} started on port {PLAYER_PORTS[player_num-1]}")
+
+    # Initial token holder
+    has_token = (player_num == 1)
 
     while True:
-        data, addr = sock.recvfrom(1024)
-        token, message = parse_message(data)
-
-        if token:
-            print(f"Player {player_number} received message: {message}")
-            if player_number == 1:
-                message = "Hello from player 1"
-            elif player_number == 2:
-                message = "Hello from player 2"
-            elif player_number == 3:
-                message = "Hello from player 3"
-            elif player_number == 4:
-                message = "Hello from player 4"
-            sock.sendto(create_message(token, message), ('localhost', next_player_port))
+        if has_token:
+            message = input(f"Player {player_num}, enter a message (or 'quit' to exit): ")
+            if message.lower() == 'quit':
+                break
+            send_message(sock, next_address, f"Player {player_num} says: {message}")
+            pass_token(sock, next_address)
+            has_token = False
         else:
-            sock.sendto(data, ('localhost', next_player_port))
+            received = receive_message(sock)
+            if received == "TOKEN":
+                has_token = True
+                print(f"Player {player_num} received the token.")
+            else:
+                print(f"Received: {received}")
+
+    sock.close()
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python main.py <player_number>")
-        sys.exit(1)
-    player_number = sys.argv[1]
-    main(player_number)
+    parser = argparse.ArgumentParser(description="Fodinha game player")
+    parser.add_argument("player_num", type=int, choices=range(1, 5), 
+                        help="Player number (1-4)")
+    args = parser.parse_args()
+    
+    main(args.player_num)
